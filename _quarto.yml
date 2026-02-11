@@ -46,7 +46,7 @@ crossref:
   appendix-title: "Appendix "
   appendix-delim: ":"
 book:
-  title: "Intro to PINN"
+  title: "Intro to PINNs"
   subtitle: "Notes"
   description: "Homepage {{< var info.date >}}."
   author: "Xinli Xiao"
