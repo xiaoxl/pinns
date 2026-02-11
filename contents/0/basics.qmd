@@ -1,0 +1,174 @@
+---
+title: "Introduction to Physics-Informed Neural Networks"
+author: "Gemini AI"
+format: 
+  html:
+    code-fold: true
+    toc: true
+    mathjax: true
+jupyter: core
+---
+
+## 1. Introduction to PINNs
+
+Physics-Informed Neural Networks (PINNs) are a class of deep learning models designed to solve differential equations by embedding the physical laws (the equations themselves) directly into the neural network's loss function.
+
+### The Core Concept
+Given a differential equation $\mathcal{F}[u(t)] = 0$, we approximate the solution $u(t)$ with a neural network $\hat{u}(t; \theta)$. The loss function is composed of:
+1. **Boundary Loss ($L_{BC}$):** Error at known initial/boundary points.
+2. **Physics Loss ($L_{f}$):** The "residual" of the differential equation across the domain.
+
+$$Loss = w_{bc} L_{BC} + w_{f} L_{f}$$
+
+---
+
+## 2. Example Problem: Simple ODE
+We will solve the following first-order ODE for $t \in [0, 2]$:
+$$\frac{du}{dt} = \cos(t), \quad u(0) = 0$$
+The analytical solution is $u(t) = \sin(t)$.
+
+---
+
+## 3. Implementation in Pure PyTorch
+In PyTorch, we manually handle the differentiation using `torch.autograd.grad`.
+
+```{python}
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+
+# 1. Define the Network
+class PINN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(1, 32), nn.Tanh(),
+            nn.Linear(32, 32), nn.Tanh(),
+            nn.Linear(32, 1)
+        )
+    def forward(self, x): return self.net(x)
+
+model = PINN()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+# 2. Training Loop
+t_boundary = torch.tensor([[0.0]], requires_grad=True)
+u_boundary = torch.tensor([[0.0]])
+t_collocation = torch.linspace(0, 2, 100).view(-1, 1).requires_grad_(True)
+
+for i in range(1000):
+    optimizer.zero_grad()
+    
+    # Boundary Loss
+    u_pred_0 = model(t_boundary)
+    loss_bc = torch.mean((u_pred_0 - u_boundary)**2)
+    
+    # Physics Loss (du/dt - cos(t) = 0)
+    u_pred = model(t_collocation)
+    du_dt = torch.autograd.grad(u_pred, t_collocation, torch.ones_like(u_pred), create_graph=True)[0]
+    loss_f = torch.mean((du_dt - torch.cos(t_collocation))**2)
+    
+    loss = loss_bc + loss_f
+    loss.backward()
+    optimizer.step()
+
+print(f"Final PyTorch Loss: {loss.item():.6f}")
+
+```
+
+4. Implementation in DeepXDE
+DeepXDE abstracts the geometry and differentiation, making the code much more readable.
+
+
+```{python}
+#| eval: false
+import deepxde as dde
+import numpy as np
+
+# 1. Define Geometry and PDE
+geom = dde.geometry.TimeDomain(0, 2)
+
+
+def pde(t, u):
+    du_dt = dde.grad.jacobian(u, t)
+    return du_dt - torch.cos(t)
+
+
+# 2. Define Boundary Condition
+def boundary(_, on_initial):
+    return on_initial
+
+
+ic = dde.icbc.IC(geom, lambda x: 0, boundary)
+
+# 3. Build and Train Model
+data = dde.data.PDE(geom, pde, ic, num_domain=100, num_boundary=2)
+net = dde.nn.FNN([1] + [32] * 3 + [1], "tanh", "Glorot uniform")
+model_dde = dde.Model(data, net)
+
+model_dde.compile("adam", lr=0.01)
+model_dde.train(iterations=1000)
+```
+
+5. Comparison: Why use which?
+   
+| Feature | Pure PyTorch | DeepXDE |
+| :--- | :--- | :--- |
+| **Control** | Full control over the computational graph | Higher level of abstraction |
+| **Effort** | High (manual gradients via `autograd`) | Low (built-in operators and wrappers) |
+| **Geometry** | Difficult for 2D/3D (requires manual math) | Very simple via `dde.geometry` |
+| **Best For** | Researching new/custom architectures | Solving engineering and physics PDEs |
+
+---
+
+### How to use this document:
+1.  **Install Quarto:** Download from [quarto.org](https://quarto.org/).
+2.  **Save the code:** Copy the block above into a file named `intro_pinn.qmd`.
+3.  **Render:** Open your terminal and run `quarto render intro_pinn.qmd`.
+4.  **Requirements:** Ensure you have `torch`, `deepxde`, and `matplotlib` installed in your Python environment.
+
+
+
+Would you like me to expand the Quarto document to include the **Second-Order Harmonic Oscillator** example we discussed earlier?
+
+This video provides an excellent visual breakdown of how PINNs leverage PyTorch's autograd to solve complex physical systems. [Physics-informed neural networks (PINN) with PyTorch](https://www.youtube.com/watch?v=whXM-w7ig-I)
+
+
+http://googleusercontent.com/youtube_content/0
+
+
+## 5. High-Precision Implementation (SIREN)
+For problems with high-frequency oscillations or where high-order derivatives are required, we swap `Tanh` for `Sine` activations using specific initialization.
+
+```{python}
+import numpy as np
+
+# SIREN Weight Initialization Function
+def siren_init(layer, is_first=False, omega_0=30):
+    in_f = layer.in_features
+    with torch.no_grad():
+        if is_first:
+            limit = 1 / in_f
+        else:
+            limit = np.sqrt(6 / in_f) / omega_0
+        layer.weight.uniform_(-limit, limit)
+
+# SIREN Model Architecture
+class SIREN(nn.Module):
+    def __init__(self, omega_0=30):
+        super().__init__()
+        self.omega_0 = omega_0
+        self.l1 = nn.Linear(1, 64)
+        self.l2 = nn.Linear(64, 64)
+        self.l3 = nn.Linear(64, 1)
+        siren_init(self.l1, is_first=True)
+        siren_init(self.l2)
+        
+    def forward(self, t):
+        x = torch.sin(self.omega_0 * self.l1(t))
+        x = torch.sin(self.omega_0 * self.l2(x))
+        return self.l3(x)
+
+model_siren = SIREN()
+# Proceed with Phase 1 (Adam) and Phase 2 (L-BFGS)
+```

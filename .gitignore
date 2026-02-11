@@ -1,0 +1,7 @@
+/_freeze/
+/stats/
+/docs/
+/.quarto/
+/_extensions/
+**/*.quarto_ipynb
+
