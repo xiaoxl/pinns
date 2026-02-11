@@ -4,5 +4,6 @@
 /.quarto/
 /_extensions/
 /venv/
+/fonts/
 **/*.quarto_ipynb
 
